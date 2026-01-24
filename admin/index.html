@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Feedback Review</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Feedback Review</div>
+    <div class="actions">
+      <span id="userLabel" class="muted"></span>
+      <button id="loginBtn" class="btn">Sign in</button>
+      <button id="logoutBtn" class="btn ghost hidden">Sign out</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="guard" class="card">
+      <h2>Access</h2>
+      <p class="muted">
+        Sign in to view feedback. If you are not on the admin allowlist, you will see nothing. That is intentional.
+      </p>
+      <div class="row">
+        <button id="loginBtn2" class="btn">Sign in with Google</button>
+      </div>
+      <p id="guardMsg" class="muted small"></p>
+    </section>
+
+    <section id="app" class="grid hidden">
+      <aside class="card">
+        <div class="row space">
+          <h2>Inbox</h2>
+          <div class="row">
+            <select id="statusFilter" class="select">
+              <option value="new" selected>new</option>
+              <option value="triaged">triaged</option>
+              <option value="rejected">rejected</option>
+              <option value="promoted">promoted</option>
+              <option value="duplicate">duplicate</option>
+            </select>
+            <button id="refreshBtn" class="btn ghost">Refresh</button>
+          </div>
+        </div>
+
+        <div id="list" class="list"></div>
+        <div class="muted small" id="listMeta"></div>
+      </aside>
+
+      <section class="card" id="detail">
+        <h2>Detail</h2>
+        <p class="muted">Select an item from the inbox.</p>
+      </section>
+    </section>
+  </main>
+
+  <footer class="footer muted small">
+    Admin-only MVP. Public roadmap and voting come later.
+  </footer>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

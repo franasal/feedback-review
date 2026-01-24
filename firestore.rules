@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email in [
+          "farcilas@gmail.com"
+        ];
+    }
+
+    // App feedback create must look like your FeedbackService.submit() payload.
+    function validFeedbackCreate() {
+      return request.resource.data.keys().hasOnly([
+        "category",
+        "location",
+        "severity",
+        "message",
+        "contact",
+        "platform",
+        "createdAt",
+        "localCreatedAt",
+        "plant",
+        "metadata",
+        "status",
+        "screenshotUrl",
+        "screenshotPath",
+        "inlineImageBase64",
+        "inlineImageContentType"
+      ])
+      && request.resource.data.category is string
+      && request.resource.data.location is string
+      && request.resource.data.severity is string
+      && request.resource.data.message is string
+      && request.resource.data.message.size() > 0
+      && request.resource.data.message.size() <= 12000
+
+      // Your app sets status='new' always.
+      && request.resource.data.status == "new"
+
+      // createdAt is serverTimestamp() (a timestamp on server write)
+      // Rules can't reliably verify serverTimestamp sentinel, so we just allow it.
+
+      // localCreatedAt is an ISO string in UTC
+      && request.resource.data.localCreatedAt is string
+
+      // metadata is a map (your code sets metadata ?? const {})
+      && request.resource.data.metadata is map
+
+      // contact can be null or string
+      && (!("contact" in request.resource.data) || request.resource.data.contact == null || request.resource.data.contact is string)
+
+      // plant can be null or map with expected keys
+      && (!("plant" in request.resource.data) || request.resource.data.plant == null || (
+          request.resource.data.plant is map
+          && request.resource.data.plant.keys().hasOnly(["id","commonName","scientificName","taxonKey"])
+        ))
+
+      // Screenshot fields are optional, but if inlineImageBase64 is present, cap size
+      && (!("inlineImageBase64" in request.resource.data) || request.resource.data.inlineImageBase64 == null
+          || (request.resource.data.inlineImageBase64 is string && request.resource.data.inlineImageBase64.size() <= 800000))
+
+      && (!("inlineImageContentType" in request.resource.data) || request.resource.data.inlineImageContentType == null
+          || request.resource.data.inlineImageContentType is string)
+
+      && (!("screenshotUrl" in request.resource.data) || request.resource.data.screenshotUrl == null
+          || request.resource.data.screenshotUrl is string)
+
+      && (!("screenshotPath" in request.resource.data) || request.resource.data.screenshotPath == null
+          || request.resource.data.screenshotPath is string);
+    }
+
+    // IMPORTANT: Your app writes to collection "feedback"
+    match /feedback/{id} {
+      // Users (even unauthenticated): CREATE only
+      allow create: if validFeedbackCreate();
+
+      // Nobody else can read/update/delete except admin
+      allow read, update, delete: if isAdmin();
+    }
+
+    // Our admin backlog (still admin-only for now)
+    match /requests/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
