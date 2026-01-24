@@ -37,6 +37,11 @@ const firebaseConfig = {
 // IMPORTANT: your Flutter app writes to a non-default Firestore databaseId:
 const FIRESTORE_DB_ID = "wild--forager-db";
 
+// GitHub issue prefill (no token, no Functions)
+const GH_OWNER = "franasal";
+const GH_REPO = "feedback-review"; // change to your actual app repo
+const GH_DEFAULT_LABELS = ["from-feedback"];
+
 // IMPORTANT: your Flutter app writes to this collection by default:
 const FEEDBACK_COLLECTION = "feedback";
 
@@ -61,6 +66,15 @@ const refreshBtn = document.getElementById("refreshBtn");
 const statusFilter = document.getElementById("statusFilter");
 
 let currentUser = null;
+
+function buildGithubIssueLink({ title, body, labels = [] }) {
+  const base = `https://github.com/${GH_OWNER}/${GH_REPO}/issues/new`;
+  const params = new URLSearchParams();
+  params.set("title", (title || "Feature request").toString().slice(0, 200));
+  params.set("body", (body || "").toString());
+  if (labels.length) params.set("labels", labels.join(","));
+  return `${base}?${params.toString()}`;
+}
 
 function fmtDate(ts) {
   try {
@@ -279,6 +293,31 @@ async function showDetail(feedbackId) {
       ? `<pre>${esc(JSON.stringify(d.metadata, null, 2))}</pre>`
       : `<p class="muted">None</p>`;
 
+    const requestId = d.requestId || null;
+
+    const ghTitle = (d.message || "Feature request")
+      .trim()
+      .split("\n")[0]
+      .slice(0, 80);
+
+    const ghBody = [
+      (d.message || "").trim(),
+      "",
+      "---",
+      `Source: Firebase feedback/${feedbackId}`,
+      requestId ? `RequestId: ${requestId}` : "",
+      `Category: ${d.category || "n/a"}`,
+      `Severity: ${d.severity || "n/a"}`,
+      `Location: ${d.location || "n/a"}`,
+      d.localCreatedAt ? `LocalCreatedAt: ${d.localCreatedAt}` : "",
+    ].filter(Boolean).join("\n");
+
+    const ghUrl = requestId ? buildGithubIssueLink({
+      title: ghTitle,
+      body: ghBody,
+      labels: GH_DEFAULT_LABELS,
+    }) : null;
+
     detailEl.innerHTML = `
       <div class="row space">
         <h2>Detail</h2>
@@ -314,14 +353,54 @@ async function showDetail(feedbackId) {
         <button class="btn ghost" id="btnTriaged">Mark triaged</button>
         <button class="btn danger" id="btnRejected">Reject</button>
         <button class="btn ok" id="btnPromote">Promote to request</button>
+        ${requestId ? `<a class="btn ghost" id="btnGhDraft" href="${esc(ghUrl)}" target="_blank" rel="noreferrer">Open GitHub issue draft</a>` : ""}
       </div>
 
       <p class="muted small" id="opMsg"></p>
+
+      ${requestId ? `
+        <p class="muted small">After submitting on GitHub, paste the issue URL below to save it here.</p>
+        <div class="row" style="flex-wrap:wrap">
+          <input id="issueUrlInput" class="select" style="min-width:260px; flex:1" placeholder="https://github.com/${GH_OWNER}/${GH_REPO}/issues/123" />
+          <button class="btn ghost" id="btnSaveIssueUrl">Save issue URL</button>
+        </div>
+      ` : ""}
     `;
 
     document.getElementById("btnTriaged").addEventListener("click", () => setStatus(feedbackId, "triaged"));
     document.getElementById("btnRejected").addEventListener("click", () => setStatus(feedbackId, "rejected"));
     document.getElementById("btnPromote").addEventListener("click", () => promoteToRequest(feedbackId, d));
+
+    if (requestId) {
+      const btn = document.getElementById("btnSaveIssueUrl");
+      const inp = document.getElementById("issueUrlInput");
+      btn?.addEventListener("click", async () => {
+        const opMsg = document.getElementById("opMsg");
+        const url = (inp?.value || "").trim();
+        if (!url) {
+          opMsg.textContent = "Paste a GitHub issue URL first.";
+          return;
+        }
+        opMsg.textContent = "Saving issue URL…";
+        try {
+          await updateDoc(doc(db, "requests", requestId), {
+            githubIssueUrl: url,
+            updatedAt: serverTimestamp(),
+          });
+
+          await updateDoc(doc(db, FEEDBACK_COLLECTION, feedbackId), {
+            githubIssueUrl: url,
+            updatedAt: serverTimestamp(),
+          });
+
+          opMsg.textContent = "Saved GitHub issue URL.";
+          await showDetail(feedbackId);
+        } catch (e) {
+          console.error(e);
+          opMsg.textContent = `Failed to save: ${e?.message || e}`;
+        }
+      });
+    }
   } catch (e) {
     console.error(e);
     detailEl.innerHTML = `<h2>Detail</h2><p class="muted">Failed: ${esc(e?.message || e)}</p>`;
@@ -355,6 +434,17 @@ async function promoteToRequest(feedbackId, feedbackDoc) {
     const title = rawMsg.split("\n")[0].slice(0, 80) || "Feedback request";
     const description = rawMsg;
 
+    const ghDraftUrl = buildGithubIssueLink({
+      title,
+      body: [
+        description,
+        "",
+        "---",
+        `Source: Firebase feedback/${feedbackId}`,
+      ].join("\n"),
+      labels: GH_DEFAULT_LABELS,
+    });
+
     const reqRef = await addDoc(collection(db, "requests"), {
       title,
       description,
@@ -364,6 +454,7 @@ async function promoteToRequest(feedbackId, feedbackDoc) {
       updatedAt: serverTimestamp(),
       createdFromFeedbackIds: [feedbackId],
       source: { collection: FEEDBACK_COLLECTION, databaseId: FIRESTORE_DB_ID },
+      githubIssueDraftUrl: ghDraftUrl,
     });
 
     await updateDoc(doc(db, FEEDBACK_COLLECTION, feedbackId), {
@@ -379,4 +470,4 @@ async function promoteToRequest(feedbackId, feedbackDoc) {
     console.error(e);
     opMsg.textContent = `Failed: ${e?.message || e}`;
   }
-}
+        }
