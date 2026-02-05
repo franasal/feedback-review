@@ -67,6 +67,8 @@ const statusFilter = document.getElementById("statusFilter");
 const testerEmailInput = document.getElementById("testerEmailInput");
 const testerAddBtn = document.getElementById("testerAddBtn");
 const testerMsg = document.getElementById("testerMsg");
+const testerList = document.getElementById("testerList");
+const testerMeta = document.getElementById("testerMeta");
 
 let currentUser = null;
 
@@ -143,6 +145,7 @@ onAuthStateChanged(auth, async (user) => {
   guard.classList.add("hidden");
   appEl.classList.remove("hidden");
   await loadInbox();
+  await loadTesters();
 });
 
 async function loadInbox() {
@@ -276,9 +279,52 @@ async function addTester() {
     }, { merge: true });
     testerMsg.textContent = "Approved.";
     testerEmailInput.value = "";
+    await loadTesters();
   } catch (e) {
     console.error(e);
     testerMsg.textContent = `Failed: ${e?.message || e}`;
+  }
+}
+
+async function loadTesters() {
+  testerList.innerHTML = "";
+  testerMeta.textContent = "Loading…";
+  try {
+    const q = query(
+      collection(db, "testers"),
+      orderBy("approvedAt", "desc"),
+      limit(50)
+    );
+    const snap = await getDocs(q);
+    const rows = [];
+    snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
+
+    if (!rows.length) {
+      testerMeta.textContent = "No testers yet.";
+      return;
+    }
+    testerMeta.textContent = `${rows.length} tester(s).`;
+    for (const r of rows) {
+      const div = document.createElement("div");
+      div.className = "item";
+      div.innerHTML = `
+        <div class="top">
+          <div>
+            <div><strong>${esc(r.email || r.id || "unknown")}</strong></div>
+            <div class="muted small">
+              ${esc(fmtDate(r.approvedAt))} · ${esc(r.approvedBy || "n/a")}
+            </div>
+          </div>
+          <div class="row">
+            <span class="badge">${r.approved === true ? "approved" : "n/a"}</span>
+          </div>
+        </div>
+      `;
+      testerList.appendChild(div);
+    }
+  } catch (e) {
+    console.error(e);
+    testerMeta.textContent = `Failed to load: ${e?.message || e}`;
   }
 }
 
