@@ -5,7 +5,8 @@ service cloud.firestore {
     function isAdmin() {
       return request.auth != null
         && request.auth.token.email in [
-          "farcilas@gmail.com"
+          "farcilas@gmail.com",
+          "test_email@gmailo.com"
         ];
     }
 
@@ -13,34 +14,28 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isOwner(uid) {
-      return isSignedIn() && request.auth.uid == uid;
+    function isNonEmptyString(x, maxLen) {
+      return (x is string) && x.size() > 0 && x.size() <= maxLen;
     }
 
-    function validTesterApplication() {
-      return request.resource.data.keys().hasOnly([
-        "email",
-        "displayName",
-        "status",
-        "source",
-        "createdAt",
-        "localCreatedAt",
-        "updatedAt",
-        "localUpdatedAt"
-      ])
-      && request.resource.data.email is string
-      && request.resource.data.email.size() > 0
-      && request.resource.data.email.size() <= 200
-      && (!("displayName" in request.resource.data)
-          || request.resource.data.displayName == null
-          || request.resource.data.displayName is string)
-      && request.resource.data.status == "pending"
-      && request.resource.data.source is string
-      && request.resource.data.localCreatedAt is string
-      && request.resource.data.localUpdatedAt is string;
+    function optStringField(data, key, maxLen) {
+      return !(key in data) || data[key] == null
+        || ((data[key] is string) && data[key].size() <= maxLen);
     }
 
-    // App feedback create must look like your FeedbackService.submit() payload.
+    // Allow feedback created without auth, but enforce uid match when signed in.
+    function validCreatedBy(data) {
+      return !('createdBy' in data) || data.createdBy == null || (
+        data.createdBy is map
+        && data.createdBy.keys().hasOnly([
+          'uid','email','displayName','isAnonymous','providerIds'
+        ])
+        && request.auth != null
+        && data.createdBy.uid == request.auth.uid
+      );
+    }
+
+    // === Feedback / Recipe submissions (strict) ===
     function validFeedbackCreate() {
       return request.resource.data.keys().hasOnly([
         "submissionType",
@@ -62,87 +57,116 @@ service cloud.firestore {
         "inlineImageBase64",
         "inlineImageContentType"
       ])
+      && request.resource.data.submissionType is string
+      && validCreatedBy(request.resource.data)
       && request.resource.data.category is string
       && request.resource.data.location is string
       && request.resource.data.severity is string
       && request.resource.data.message is string
       && request.resource.data.message.size() > 0
       && request.resource.data.message.size() <= 12000
-
-      // Your app sets status='new' always.
       && request.resource.data.status == "new"
-
-      // createdAt is serverTimestamp() (a timestamp on server write)
-      // Rules can't reliably verify serverTimestamp sentinel, so we just allow it.
-
-      // localCreatedAt is an ISO string in UTC
       && request.resource.data.localCreatedAt is string
-
-      // metadata is a map (your code sets metadata ?? const {})
       && request.resource.data.metadata is map
-
-      // createdBy can be null or a map
-      && (!("createdBy" in request.resource.data) || request.resource.data.createdBy == null || request.resource.data.createdBy is map)
-
-      // payload can be null or a map
-      && (!("payload" in request.resource.data) || request.resource.data.payload == null || request.resource.data.payload is map)
-
-      // contact can be null or string
       && (!("contact" in request.resource.data) || request.resource.data.contact == null || request.resource.data.contact is string)
-
-      // plant can be null or map with expected keys
+      && (!("payload" in request.resource.data) || request.resource.data.payload == null || request.resource.data.payload is map)
       && (!("plant" in request.resource.data) || request.resource.data.plant == null || (
           request.resource.data.plant is map
           && request.resource.data.plant.keys().hasOnly(["id","commonName","scientificName","taxonKey"])
         ))
-
-      // Screenshot fields are optional, but if inlineImageBase64 is present, cap size
       && (!("inlineImageBase64" in request.resource.data) || request.resource.data.inlineImageBase64 == null
           || (request.resource.data.inlineImageBase64 is string && request.resource.data.inlineImageBase64.size() <= 800000))
-
       && (!("inlineImageContentType" in request.resource.data) || request.resource.data.inlineImageContentType == null
           || request.resource.data.inlineImageContentType is string)
-
       && (!("screenshotUrl" in request.resource.data) || request.resource.data.screenshotUrl == null
           || request.resource.data.screenshotUrl is string)
-
       && (!("screenshotPath" in request.resource.data) || request.resource.data.screenshotPath == null
           || request.resource.data.screenshotPath is string);
     }
 
-    // IMPORTANT: Your app writes to collection "feedback"
     match /feedback/{id} {
-      // Users (even unauthenticated): CREATE only
       allow create: if validFeedbackCreate();
-
-      // Nobody else can read/update/delete except admin
       allow read, update, delete: if isAdmin();
     }
 
-    // Our admin backlog (still admin-only for now)
+    match /recipe_submissions/{id} {
+      allow create: if isSignedIn() && validFeedbackCreate();
+      allow read, update, delete: if isAdmin();
+    }
+
+    // === Interactions (launch count) ===
+    function validInteractionDoc(data) {
+      return isNonEmptyString(data.message, 20000)
+        && isNonEmptyString(data.category, 200)
+        && isNonEmptyString(data.location, 200)
+        && isNonEmptyString(data.severity, 50)
+        && (data.status is string)
+        && (data.localCreatedAt is string)
+        && (data.metadata is map)
+        && optStringField(data, "contact", 500)
+        && optStringField(data, "platform", 50)
+        && optStringField(data, "inlineImageContentType", 200)
+        && optStringField(data, "screenshotUrl", 2000)
+        && optStringField(data, "screenshotPath", 2000)
+        && optStringField(data, "inlineImageBase64", 2000000);
+    }
+
+    match /interactions/{id} {
+      allow create: if validInteractionDoc(request.resource.data);
+
+      allow update: if validInteractionDoc(resource.data)
+        && request.resource.data.diff(resource.data).changedKeys()
+          .hasOnly(['lastSeenAt', 'localLastSeenAt', 'launchCount']);
+
+      allow read, delete: if isAdmin();
+    }
+
+    // === Observations ===
+    match /observations/{id} {
+      allow create: if isSignedIn()
+        && request.resource.data.keys().hasOnly([
+          "submissionType",
+          "plantId",
+          "plantName",
+          "lat",
+          "lon",
+          "observedAt",
+          "notes",
+          "createdAt",
+          "localCreatedAt",
+          "createdBy",
+          "metadata",
+          "status"
+        ])
+        && request.resource.data.submissionType == "observation"
+        && validCreatedBy(request.resource.data)
+        && request.resource.data.plantName is string
+        && request.resource.data.lat is number
+        && request.resource.data.lon is number
+        && request.resource.data.observedAt is string
+        && request.resource.data.metadata is map
+        && request.resource.data.status == "new";
+
+      allow read, update, delete: if isAdmin();
+    }
+
+    // === Users ===
+    match /users/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Admin backlog
     match /requests/{id} {
       allow read, write: if isAdmin();
     }
 
-    // User profiles (app writes here).
-    match /users/{uid} {
-      allow read: if isAdmin() || isOwner(uid);
-      allow create, update: if isOwner(uid);
-      allow delete: if isAdmin();
-    }
-
-    // Web allowlist for testers (docId = lowercase email).
+    // Web tester allowlist (docId = lowercase email)
     match /testers/{email} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // Tester applications (admin reviews/approves).
-    match /tester_applications/{email} {
-      allow create: if validTesterApplication();
-      allow read, update, delete: if isAdmin();
-    }
-
+    // Default deny
     match /{document=**} {
       allow read, write: if false;
     }
