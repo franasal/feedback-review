@@ -16,6 +16,7 @@ import {
   where,
   orderBy,
   limit,
+  addDoc,
   updateDoc,
   setDoc,
   serverTimestamp,
