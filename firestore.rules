@@ -9,6 +9,37 @@ service cloud.firestore {
         ];
     }
 
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function validTesterApplication() {
+      return request.resource.data.keys().hasOnly([
+        "email",
+        "displayName",
+        "status",
+        "source",
+        "createdAt",
+        "localCreatedAt",
+        "updatedAt",
+        "localUpdatedAt"
+      ])
+      && request.resource.data.email is string
+      && request.resource.data.email.size() > 0
+      && request.resource.data.email.size() <= 200
+      && (!("displayName" in request.resource.data)
+          || request.resource.data.displayName == null
+          || request.resource.data.displayName is string)
+      && request.resource.data.status == "pending"
+      && request.resource.data.source is string
+      && request.resource.data.localCreatedAt is string
+      && request.resource.data.localUpdatedAt is string;
+    }
+
     // App feedback create must look like your FeedbackService.submit() payload.
     function validFeedbackCreate() {
       return request.resource.data.keys().hasOnly([
@@ -93,10 +124,23 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // User profiles (app writes here).
+    match /users/{uid} {
+      allow read: if isAdmin() || isOwner(uid);
+      allow create, update: if isOwner(uid);
+      allow delete: if isAdmin();
+    }
+
     // Web allowlist for testers (docId = lowercase email).
     match /testers/{email} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    // Tester applications (admin reviews/approves).
+    match /tester_applications/{email} {
+      allow create: if validTesterApplication();
+      allow read, update, delete: if isAdmin();
     }
 
     match /{document=**} {

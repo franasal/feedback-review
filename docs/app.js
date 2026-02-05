@@ -70,6 +70,10 @@ const testerAddBtn = document.getElementById("testerAddBtn");
 const testerMsg = document.getElementById("testerMsg");
 const testerList = document.getElementById("testerList");
 const testerMeta = document.getElementById("testerMeta");
+const appList = document.getElementById("appList");
+const appMeta = document.getElementById("appMeta");
+const userList = document.getElementById("userList");
+const userMeta = document.getElementById("userMeta");
 
 let currentUser = null;
 
@@ -147,6 +151,8 @@ onAuthStateChanged(auth, async (user) => {
   appEl.classList.remove("hidden");
   await loadInbox();
   await loadTesters();
+  await loadTesterApplications();
+  await loadUsers();
 });
 
 async function loadInbox() {
@@ -326,6 +332,150 @@ async function loadTesters() {
   } catch (e) {
     console.error(e);
     testerMeta.textContent = `Failed to load: ${e?.message || e}`;
+  }
+}
+
+async function loadTesterApplications() {
+  appList.innerHTML = "";
+  appMeta.textContent = "Loading…";
+  try {
+    const q = query(
+      collection(db, "tester_applications"),
+      orderBy("createdAt", "desc"),
+      limit(50)
+    );
+    const snap = await getDocs(q);
+    const rows = [];
+    snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
+
+    if (!rows.length) {
+      appMeta.textContent = "No applications yet.";
+      return;
+    }
+    appMeta.textContent = `${rows.length} application(s).`;
+    for (const r of rows) {
+      const status = r.status || "pending";
+      const email = r.email || r.id || "unknown";
+      const display = r.displayName || "";
+      const div = document.createElement("div");
+      div.className = "item";
+      div.innerHTML = `
+        <div class="top">
+          <div>
+            <div><strong>${esc(email)}</strong></div>
+            <div class="muted small">
+              ${esc(display)} ${display ? "·" : ""} ${esc(fmtDate(r.createdAt))}
+            </div>
+          </div>
+          <div class="row">
+            <span class="badge">${esc(status)}</span>
+            ${status === "pending" ? `
+              <button class="btn ok" data-action="approve">Approve</button>
+              <button class="btn danger" data-action="reject">Reject</button>
+            ` : ""}
+          </div>
+        </div>
+      `;
+      if (status === "pending") {
+        div.querySelector('[data-action="approve"]')
+          ?.addEventListener("click", () => approveApplication(r.id, email));
+        div.querySelector('[data-action="reject"]')
+          ?.addEventListener("click", () => rejectApplication(r.id));
+      }
+      appList.appendChild(div);
+    }
+  } catch (e) {
+    console.error(e);
+    appMeta.textContent = `Failed to load: ${e?.message || e}`;
+  }
+}
+
+async function approveApplication(appId, email) {
+  appMeta.textContent = "Approving…";
+  try {
+    const approvedBy = currentUser?.email || currentUser?.uid || null;
+    await setDoc(doc(db, "testers", email), {
+      approved: true,
+      approvedAt: serverTimestamp(),
+      approvedBy,
+      email,
+    }, { merge: true });
+    await updateDoc(doc(db, "tester_applications", appId), {
+      status: "approved",
+      approvedAt: serverTimestamp(),
+      approvedBy,
+      updatedAt: serverTimestamp(),
+    });
+    await loadTesters();
+    await loadTesterApplications();
+  } catch (e) {
+    console.error(e);
+    appMeta.textContent = `Failed to approve: ${e?.message || e}`;
+  }
+}
+
+async function rejectApplication(appId) {
+  appMeta.textContent = "Rejecting…";
+  try {
+    const approvedBy = currentUser?.email || currentUser?.uid || null;
+    await updateDoc(doc(db, "tester_applications", appId), {
+      status: "rejected",
+      rejectedAt: serverTimestamp(),
+      rejectedBy: approvedBy,
+      updatedAt: serverTimestamp(),
+    });
+    await loadTesterApplications();
+  } catch (e) {
+    console.error(e);
+    appMeta.textContent = `Failed to reject: ${e?.message || e}`;
+  }
+}
+
+async function loadUsers() {
+  userList.innerHTML = "";
+  userMeta.textContent = "Loading…";
+  try {
+    const q = query(
+      collection(db, "users"),
+      orderBy("createdAt", "desc"),
+      limit(50)
+    );
+    const snap = await getDocs(q);
+    const rows = [];
+    snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
+
+    if (!rows.length) {
+      userMeta.textContent = "No users yet.";
+      return;
+    }
+    userMeta.textContent = `${rows.length} user(s).`;
+    for (const r of rows) {
+      const email = r.email || "unknown";
+      const name = r.displayName || "";
+      const providers = Array.isArray(r.providerIds)
+        ? r.providerIds.join(", ")
+        : "";
+      const div = document.createElement("div");
+      div.className = "item";
+      div.innerHTML = `
+        <div class="top">
+          <div>
+            <div><strong>${esc(email)}</strong></div>
+            <div class="muted small">
+              ${esc(name)} ${name ? "·" : ""} ${esc(fmtDate(r.createdAt))}
+              ${providers ? `· ${esc(providers)}` : ""}
+            </div>
+          </div>
+          <div class="row">
+            <span class="badge">registered</span>
+          </div>
+        </div>
+      `;
+      userList.appendChild(div);
+    }
+  } catch (e) {
+    console.error(e);
+    userMeta.textContent = `Failed to load: ${e?.message || e}`;
   }
 }
 
