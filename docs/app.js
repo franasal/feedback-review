@@ -19,6 +19,7 @@ import {
   addDoc,
   updateDoc,
   setDoc,
+  deleteDoc,
   serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
@@ -40,7 +41,7 @@ const FIRESTORE_DB_ID = "wild--forager-db";
 
 // GitHub issue prefill (no token, no Functions)
 const GH_OWNER = "franasal";
-const GH_REPO = "feedback-review"; // change to your actual app repo
+const GH_REPO = "wild_forager";
 const GH_DEFAULT_LABELS = ["from-feedback"];
 
 // IMPORTANT: your Flutter app writes to this collection by default:
@@ -54,6 +55,7 @@ const provider = new GoogleAuthProvider();
 // UI refs
 const guard = document.getElementById("guard");
 const guardMsg = document.getElementById("guardMsg");
+const adminStatus = document.getElementById("adminStatus");
 const appEl = document.getElementById("app");
 const listEl = document.getElementById("list");
 const listMetaEl = document.getElementById("listMeta");
@@ -72,10 +74,28 @@ const testerList = document.getElementById("testerList");
 const testerMeta = document.getElementById("testerMeta");
 const appList = document.getElementById("appList");
 const appMeta = document.getElementById("appMeta");
+const recipeList = document.getElementById("recipeList");
+const recipeMeta = document.getElementById("recipeMeta");
 const userList = document.getElementById("userList");
 const userMeta = document.getElementById("userMeta");
 
 let currentUser = null;
+
+let adminState = null; // null | true | false
+
+function isPermissionError(e) {
+  const code = e?.code || e?.errorCode || "";
+  return String(code).includes("permission-denied");
+}
+
+function setAdminStatus(state, message) {
+  if (!adminStatus) return;
+  adminState = state;
+  adminStatus.classList.remove("hidden", "ok", "warn");
+  if (state === true) adminStatus.classList.add("ok");
+  if (state === false) adminStatus.classList.add("warn");
+  adminStatus.textContent = message || (state ? "Admin access OK." : "Admin access denied.");
+}
 
 function buildGithubIssueLink({ title, body, labels = [] }) {
   const base = `https://github.com/${GH_OWNER}/${GH_REPO}/issues/new`;
@@ -84,6 +104,79 @@ function buildGithubIssueLink({ title, body, labels = [] }) {
   params.set("body", (body || "").toString());
   if (labels.length) params.set("labels", labels.join(","));
   return `${base}?${params.toString()}`;
+}
+
+function _labelForFeedbackType(type) {
+  switch ((type || "").trim()) {
+    case "Bug / something broken":
+      return "bug";
+    case "Confusing / unclear":
+      return "confusing";
+    case "Suggestion / feature request":
+      return "suggestion";
+    case "Data issue":
+      return "data-issue";
+    case "Other":
+      return "other";
+    default:
+      return null;
+  }
+}
+
+function _labelForFeedbackLocation(location) {
+  switch ((location || "").trim()) {
+    case "Home / list / search":
+      return "home";
+    case "Map / radar view":
+      return "map";
+    case "Plant details":
+      return "plant-details";
+    case "Images / gallery / credits":
+      return "images";
+    case "Download / offline / dataset refresh":
+      return "download";
+    case "Other":
+      return "other";
+    default:
+      return null;
+  }
+}
+
+function _labelForFeedbackSeverity(severity) {
+  switch ((severity || "").trim()) {
+    case "Blocks me completely":
+      return "severity-blocker";
+    case "Annoying but usable":
+      return "severity-annoying";
+    case "Minor / cosmetic":
+      return "severity-minor";
+    default:
+      return null;
+  }
+}
+
+function _labelForSubmissionType(submissionType) {
+  switch ((submissionType || "").trim()) {
+    case "feedback":
+      return "submission-feedback";
+    case "recipe_submissions":
+      return "submission-recipe";
+    default:
+      return null;
+  }
+}
+
+function labelsForFeedbackDoc(doc) {
+  const labels = new Set(GH_DEFAULT_LABELS);
+  const typeLabel = _labelForFeedbackType(doc?.category);
+  const locationLabel = _labelForFeedbackLocation(doc?.location);
+  const severityLabel = _labelForFeedbackSeverity(doc?.severity);
+  const submissionLabel = _labelForSubmissionType(doc?.submissionType);
+  if (typeLabel) labels.add(typeLabel);
+  if (locationLabel) labels.add(`area-${locationLabel}`);
+  if (severityLabel) labels.add(severityLabel);
+  if (submissionLabel) labels.add(submissionLabel);
+  return Array.from(labels);
 }
 
 function fmtDate(ts) {
@@ -256,11 +349,15 @@ async function loadInbox() {
       }
     } catch (e2) {
       console.error(e2);
-      listMetaEl.textContent =
-        "Failed to load. If you are not admin, Firestore rules will block you.";
+      listMetaEl.textContent = isPermissionError(e2)
+        ? "Missing or insufficient permissions."
+        : `Failed to load: ${e2?.message || e2}`;
       guard.classList.remove("hidden");
       appEl.classList.add("hidden");
-      guardMsg.textContent = `Firestore access denied or misconfigured: ${e2?.message || e2}`;
+      guardMsg.textContent = isPermissionError(e2)
+        ? "Access denied. Add your email to the admin allowlist in Firestore rules."
+        : `Firestore error: ${e2?.message || e2}`;
+      if (isPermissionError(e2)) setAdminStatus(false, "Admin access denied. Check Firestore rules allowlist.");
     }
   }
 }
@@ -331,7 +428,10 @@ async function loadTesters() {
     }
   } catch (e) {
     console.error(e);
-    testerMeta.textContent = `Failed to load: ${e?.message || e}`;
+    testerMeta.textContent = isPermissionError(e)
+      ? "Missing or insufficient permissions."
+      : `Failed to load: ${e?.message || e}`;
+    if (isPermissionError(e)) setAdminStatus(false, "Admin access denied. Check Firestore rules allowlist.");
   }
 }
 
@@ -386,7 +486,10 @@ async function loadTesterApplications() {
     }
   } catch (e) {
     console.error(e);
-    appMeta.textContent = `Failed to load: ${e?.message || e}`;
+    appMeta.textContent = isPermissionError(e)
+      ? "Missing or insufficient permissions."
+      : `Failed to load: ${e?.message || e}`;
+    if (isPermissionError(e)) setAdminStatus(false, "Admin access denied. Check Firestore rules allowlist.");
   }
 }
 
@@ -428,6 +531,56 @@ async function rejectApplication(appId) {
   } catch (e) {
     console.error(e);
     appMeta.textContent = `Failed to reject: ${e?.message || e}`;
+  }
+}
+
+
+async function loadRecipeSubmissions() {
+  recipeList.innerHTML = "";
+  recipeMeta.textContent = "Loading…";
+  try {
+    const q = query(
+      collection(db, "recipe_submissions"),
+      orderBy("createdAt", "desc"),
+      limit(50)
+    );
+    const snap = await getDocs(q);
+    const rows = [];
+    snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
+
+    if (!rows.length) {
+      recipeMeta.textContent = "No recipes yet.";
+      setAdminStatus(true, "Admin access OK.");
+      return;
+    }
+    recipeMeta.textContent = `${rows.length} recipe(s).`;
+    setAdminStatus(true, "Admin access OK.");
+
+    for (const r of rows) {
+      const title = r.payload?.title || r.title || "(no title)";
+      const plantName = r.plant?.commonName || r.plant?.scientificName || "";
+      const div = document.createElement("div");
+      div.className = "item";
+      div.innerHTML = `
+        <div class="top">
+          <div>
+            <div><strong>${esc(title)}</strong></div>
+            <div class="muted small">${esc(plantName)} ${plantName ? "·" : ""} ${esc(fmtDate(r.createdAt))}</div>
+          </div>
+          <div class="row">
+            <span class="badge">recipe</span>
+          </div>
+        </div>
+      `;
+      div.addEventListener("click", () => showRecipeDetail(r));
+      recipeList.appendChild(div);
+    }
+  } catch (e) {
+    console.error(e);
+    recipeMeta.textContent = isPermissionError(e)
+      ? "Missing or insufficient permissions."
+      : `Failed to load: ${e?.message || e}`;
+    if (isPermissionError(e)) setAdminStatus(false, "Admin access denied. Check Firestore rules allowlist.");
   }
 }
 
@@ -475,8 +628,47 @@ async function loadUsers() {
     }
   } catch (e) {
     console.error(e);
-    userMeta.textContent = `Failed to load: ${e?.message || e}`;
+    userMeta.textContent = isPermissionError(e)
+      ? "Missing or insufficient permissions."
+      : `Failed to load: ${e?.message || e}`;
+    if (isPermissionError(e)) setAdminStatus(false, "Admin access denied. Check Firestore rules allowlist.");
   }
+}
+
+
+function showRecipeDetail(d) {
+  const plantHtml = d.plant
+    ? `<pre>${esc(JSON.stringify(d.plant, null, 2))}</pre>`
+    : `<p class="muted">None</p>`;
+
+  const payloadHtml = d.payload
+    ? `<pre>${esc(JSON.stringify(d.payload, null, 2))}</pre>`
+    : `<p class="muted">None</p>`;
+
+  detailEl.innerHTML = `
+    <div class="row space">
+      <h2>Recipe Submission</h2>
+      <span class="badge">recipe</span>
+    </div>
+
+    <div class="kv">
+      <div class="muted">Created</div><div>${esc(fmtDate(d.createdAt))}</div>
+      <div class="muted">Local created</div><div>${esc(d.localCreatedAt || "n/a")}</div>
+      <div class="muted">Plant</div><div>${esc(d.plant?.commonName || d.plant?.scientificName || "n/a")}</div>
+    </div>
+
+    <hr />
+    <h3>Message</h3>
+    <pre>${esc(d.message || "")}</pre>
+
+    <hr />
+    <h3>Plant</h3>
+    ${plantHtml}
+
+    <hr />
+    <h3>Payload</h3>
+    ${payloadHtml}
+  `;
 }
 
 async function showDetail(feedbackId) {
@@ -551,7 +743,7 @@ async function showDetail(feedbackId) {
     const ghUrl = requestId ? buildGithubIssueLink({
       title: ghTitle,
       body: ghBody,
-      labels: GH_DEFAULT_LABELS,
+      labels: labelsForFeedbackDoc(d),
     }) : null;
 
     detailEl.innerHTML = `
@@ -600,6 +792,7 @@ async function showDetail(feedbackId) {
         <button class="btn ghost" id="btnTriaged">Mark triaged</button>
         <button class="btn danger" id="btnRejected">Reject</button>
         <button class="btn ok" id="btnPromote">Promote to request</button>
+        <button class="btn danger" id="btnDeleteFeedback">Delete feedback</button>
         ${requestId ? `<a class="btn ghost" id="btnGhDraft" href="${esc(ghUrl)}" target="_blank" rel="noreferrer">Open GitHub issue draft</a>` : ""}
       </div>
 
@@ -617,6 +810,8 @@ async function showDetail(feedbackId) {
     document.getElementById("btnTriaged").addEventListener("click", () => setStatus(feedbackId, "triaged"));
     document.getElementById("btnRejected").addEventListener("click", () => setStatus(feedbackId, "rejected"));
     document.getElementById("btnPromote").addEventListener("click", () => promoteToRequest(feedbackId, d));
+
+    document.getElementById("btnDeleteFeedback").addEventListener("click", () => deleteFeedback(feedbackId, d));
 
     if (requestId) {
       const btn = document.getElementById("btnSaveIssueUrl");
@@ -651,6 +846,26 @@ async function showDetail(feedbackId) {
   } catch (e) {
     console.error(e);
     detailEl.innerHTML = `<h2>Detail</h2><p class="muted">Failed: ${esc(e?.message || e)}</p>`;
+  }
+}
+
+
+async function deleteFeedback(feedbackId, feedbackDoc) {
+  const opMsg = document.getElementById("opMsg");
+  const msg = [
+    "Delete this feedback? This cannot be undone.",
+    feedbackDoc?.requestId ? "It is linked to a request." : null,
+  ].filter(Boolean).join(" ");
+  if (!window.confirm(msg)) return;
+  opMsg.textContent = "Deleting…";
+  try {
+    await deleteDoc(doc(db, FEEDBACK_COLLECTION, feedbackId));
+    opMsg.textContent = "Deleted.";
+    await loadInbox();
+    detailEl.innerHTML = `<h2>Detail</h2><p class="muted">Select an item from the inbox.</p>`;
+  } catch (e) {
+    console.error(e);
+    opMsg.textContent = `Failed to delete: ${e?.message || e}`;
   }
 }
 
@@ -689,7 +904,7 @@ async function promoteToRequest(feedbackId, feedbackDoc) {
         "---",
         `Source: Firebase feedback/${feedbackId}`,
       ].join("\n"),
-      labels: GH_DEFAULT_LABELS,
+      labels: labelsForFeedbackDoc(feedbackDoc),
     });
 
     const reqRef = await addDoc(collection(db, "requests"), {

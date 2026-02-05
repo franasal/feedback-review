@@ -118,3 +118,21 @@ img.screenshot {
   text-align: center;
   margin-top: 24px;
 }
+
+
+.statusbar {
+  margin: 12px 0 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.03);
+  font-size: 12px;
+}
+.statusbar.ok {
+  border-color: rgba(94,227,143,0.6);
+  color: #bff2d2;
+}
+.statusbar.warn {
+  border-color: rgba(255,107,107,0.6);
+  color: #ffd1d1;
+}
