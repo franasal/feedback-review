@@ -567,3 +567,5 @@ async function promoteToRequest(feedbackId, feedbackDoc) {
     console.error(e);
     opMsg.textContent = `Failed: ${e?.message || e}`;
   }
+
+  
