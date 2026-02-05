@@ -17,7 +17,7 @@ import {
   orderBy,
   limit,
   updateDoc,
-  addDoc,
+  setDoc,
   serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
@@ -64,6 +64,9 @@ const logoutBtn = document.getElementById("logoutBtn");
 const userLabel = document.getElementById("userLabel");
 const refreshBtn = document.getElementById("refreshBtn");
 const statusFilter = document.getElementById("statusFilter");
+const testerEmailInput = document.getElementById("testerEmailInput");
+const testerAddBtn = document.getElementById("testerAddBtn");
+const testerMsg = document.getElementById("testerMsg");
 
 let currentUser = null;
 
@@ -116,6 +119,7 @@ logoutBtn.addEventListener("click", doLogout);
 
 refreshBtn.addEventListener("click", () => loadInbox());
 statusFilter.addEventListener("change", () => loadInbox());
+testerAddBtn.addEventListener("click", () => addTester());
 
 onAuthStateChanged(auth, async (user) => {
   currentUser = user;
@@ -251,6 +255,33 @@ async function loadInbox() {
   }
 }
 
+function normalizeEmail(raw) {
+  return String(raw || "").trim().toLowerCase();
+}
+
+async function addTester() {
+  testerMsg.textContent = "";
+  const email = normalizeEmail(testerEmailInput.value);
+  if (!email || !email.includes("@")) {
+    testerMsg.textContent = "Enter a valid email first.";
+    return;
+  }
+  try {
+    testerMsg.textContent = "Saving…";
+    await setDoc(doc(db, "testers", email), {
+      approved: true,
+      approvedAt: serverTimestamp(),
+      approvedBy: currentUser?.email || currentUser?.uid || null,
+      email,
+    }, { merge: true });
+    testerMsg.textContent = "Approved.";
+    testerEmailInput.value = "";
+  } catch (e) {
+    console.error(e);
+    testerMsg.textContent = `Failed: ${e?.message || e}`;
+  }
+}
+
 async function showDetail(feedbackId) {
   detailEl.innerHTML = `<h2>Detail</h2><p class="muted">Loading…</p>`;
 
@@ -289,8 +320,16 @@ async function showDetail(feedbackId) {
       ? `<pre>${esc(JSON.stringify(d.plant, null, 2))}</pre>`
       : `<p class="muted">None</p>`;
 
+    const createdByHtml = d.createdBy
+      ? `<pre>${esc(JSON.stringify(d.createdBy, null, 2))}</pre>`
+      : `<p class="muted">None</p>`;
+
     const metadataHtml = d.metadata
       ? `<pre>${esc(JSON.stringify(d.metadata, null, 2))}</pre>`
+      : `<p class="muted">None</p>`;
+
+    const payloadHtml = d.payload
+      ? `<pre>${esc(JSON.stringify(d.payload, null, 2))}</pre>`
       : `<p class="muted">None</p>`;
 
     const requestId = d.requestId || null;
@@ -329,9 +368,12 @@ async function showDetail(feedbackId) {
         <div class="muted">Severity</div><div>${esc(d.severity || "n/a")}</div>
         <div class="muted">Location</div><div>${esc(d.location || "n/a")}</div>
         <div class="muted">Platform</div><div>${esc(d.platform || "n/a")}</div>
+        <div class="muted">Submission</div><div>${esc(d.submissionType || "feedback")}</div>
         <div class="muted">Created</div><div>${esc(fmtDate(d.createdAt))}</div>
         <div class="muted">Local created</div><div>${esc(d.localCreatedAt || "n/a")}</div>
         <div class="muted">Contact</div><div>${esc(d.contact || "n/a")}</div>
+        <div class="muted">Request ID</div><div>${esc(requestId || "n/a")}</div>
+        <div class="muted">GitHub</div><div>${esc(d.githubIssueUrl || "n/a")}</div>
       </div>
 
       <hr />
@@ -345,8 +387,16 @@ async function showDetail(feedbackId) {
       ${plantHtml}
 
       <hr />
+      <h3>Created By</h3>
+      ${createdByHtml}
+
+      <hr />
       <h3>Metadata</h3>
       ${metadataHtml}
+
+      <hr />
+      <h3>Payload</h3>
+      ${payloadHtml}
 
       <hr />
       <div class="row" style="flex-wrap:wrap">
@@ -470,4 +520,3 @@ async function promoteToRequest(feedbackId, feedbackDoc) {
     console.error(e);
     opMsg.textContent = `Failed: ${e?.message || e}`;
   }
-        }

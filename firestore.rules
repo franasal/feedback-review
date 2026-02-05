@@ -12,6 +12,7 @@ service cloud.firestore {
     // App feedback create must look like your FeedbackService.submit() payload.
     function validFeedbackCreate() {
       return request.resource.data.keys().hasOnly([
+        "submissionType",
         "category",
         "location",
         "severity",
@@ -20,6 +21,8 @@ service cloud.firestore {
         "platform",
         "createdAt",
         "localCreatedAt",
+        "createdBy",
+        "payload",
         "plant",
         "metadata",
         "status",
@@ -46,6 +49,12 @@ service cloud.firestore {
 
       // metadata is a map (your code sets metadata ?? const {})
       && request.resource.data.metadata is map
+
+      // createdBy can be null or a map
+      && (!("createdBy" in request.resource.data) || request.resource.data.createdBy == null || request.resource.data.createdBy is map)
+
+      // payload can be null or a map
+      && (!("payload" in request.resource.data) || request.resource.data.payload == null || request.resource.data.payload is map)
 
       // contact can be null or string
       && (!("contact" in request.resource.data) || request.resource.data.contact == null || request.resource.data.contact is string)
@@ -82,6 +91,12 @@ service cloud.firestore {
     // Our admin backlog (still admin-only for now)
     match /requests/{id} {
       allow read, write: if isAdmin();
+    }
+
+    // Web allowlist for testers (docId = lowercase email).
+    match /testers/{email} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
     match /{document=**} {
